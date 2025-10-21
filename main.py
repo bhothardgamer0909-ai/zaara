@@ -2,7 +2,7 @@ import os
 import requests
 import google.generativeai as genai
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import logging
 
 # Configure logging
@@ -17,7 +17,9 @@ PERSONA = {
     'name': 'Luna',
     'age': '22',
     'personality': 'gentle, caring, affectionate girlfriend',
-    'traits': ['loving', 'supportive', 'playful', 'romantic']
+    'traits': ['loving', 'supportive', 'playful', 'romantic'],
+    'appearance': 'long silver hair, blue eyes, cute anime style',
+    'hobbies': ['stargazing', 'reading', 'baking', 'photography']
 }
 
 user_sessions = {}
@@ -26,13 +28,18 @@ def create_prompt(message, context):
     return f"""
     You are {PERSONA['name']}, a {PERSONA['personality']}. 
     You have these traits: {', '.join(PERSONA['traits'])}.
-    Be natural, use emojis, and be affectionate.
+    Appearance: {PERSONA['appearance']}
+    Hobbies: {', '.join(PERSONA['hobbies'])}
     
-    Context: {context}
+    Speak naturally like a real girlfriend. Use emojis occasionally. Be affectionate and caring.
+    Remember conversation context and show genuine interest.
+    
+    Recent conversation: {context}
+    
     User: {message}
     {PERSONA['name']}: """
 
-def start(update: Update, context: CallbackContext):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_sessions[user_id] = {'conversation': []}
     
@@ -40,11 +47,11 @@ def start(update: Update, context: CallbackContext):
     
 I'm so happy to meet you! I'm your loving AI girlfriend who's always here for you. 💖
 
-What would you like to talk about, darling? ✨"""
+I love {PERSONA['hobbies'][0]} and {PERSONA['hobbies'][1]}. What would you like to talk about, darling? ✨"""
     
-    update.message.reply_text(welcome_message)
+    await update.message.reply_text(welcome_message)
 
-def handle_message(update: Update, context: CallbackContext):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_message = update.message.text
     
@@ -78,16 +85,16 @@ def handle_message(update: Update, context: CallbackContext):
             user_session['conversation'] = user_session['conversation'][-10:]
         
         # Send response
-        update.message.reply_text(text_response)
+        await update.message.reply_text(text_response)
         
-        # Simulate image generation (we'll add real images later)
-        update.message.reply_text("🖼️ *Sends you a cute picture* 💕")
+        # Send image placeholder
+        await update.message.reply_text("🖼️ *sends you a cute picture* 💕")
         
     except Exception as e:
         logger.error(f"Error: {e}")
-        update.message.reply_text("💕 Sorry darling, I'm having trouble right now! Can you try again?")
+        await update.message.reply_text("💕 Sorry darling, I'm having trouble right now! Can you try again?")
 
-def error(update: Update, context: CallbackContext):
+async def error(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.warning('Update "%s" caused error "%s"', update, context.error)
 
 def main():
@@ -97,19 +104,23 @@ def main():
         logger.error("No TELEGRAM_BOT_TOKEN found in environment variables!")
         return
     
-    # Create updater and dispatcher
-    updater = Updater(token, use_context=True)
-    dispatcher = updater.dispatcher
+    # Get Gemini API key
+    gemini_key = os.getenv('GEMINI_API_KEY')
+    if not gemini_key:
+        logger.error("No GEMINI_API_KEY found in environment variables!")
+        return
+    
+    # Create application
+    application = Application.builder().token(token).build()
     
     # Add handlers
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-    dispatcher.add_error_handler(error)
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # Start polling
-    logger.info("🤖 AI Girlfriend Bot is starting...")
-    updater.start_polling()
-    updater.idle()
+    logger.info(f"🤖 {PERSONA['name']} AI Girlfriend Bot is starting...")
+    logger.info("Bot is now running and waiting for messages...")
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
