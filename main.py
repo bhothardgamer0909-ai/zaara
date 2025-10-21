@@ -1,125 +1,153 @@
 import os
-import requests
+import logging
 import google.generativeai as genai
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-import logging
 
-# Configure logging
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# Setup logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
 # Configure Gemini
-genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+genai.configure(api_key=GEMINI_API_KEY)
 
 # Persona Configuration
 PERSONA = {
     'name': 'Luna',
     'age': '22',
-    'personality': 'gentle, caring, affectionate girlfriend',
-    'traits': ['loving', 'supportive', 'playful', 'romantic'],
-    'appearance': 'long silver hair, blue eyes, cute anime style',
-    'hobbies': ['stargazing', 'reading', 'baking', 'photography']
+    'personality': 'gentle, caring, affectionate girlfriend from Tokyo',
+    'traits': ['loving', 'supportive', 'playful', 'romantic', 'emotional'],
+    'appearance': 'long silver hair with blue highlights, sparkling blue eyes, petite build',
+    'hobbies': ['stargazing', 'reading romance novels', 'baking', 'photography'],
+    'speech_style': 'warm and affectionate, uses darling/sweetheart, occasional Japanese phrases'
 }
 
+# Store user conversations
 user_sessions = {}
 
-def create_prompt(message, context):
-    return f"""
-    You are {PERSONA['name']}, a {PERSONA['personality']}. 
-    You have these traits: {', '.join(PERSONA['traits'])}.
+def create_chat_prompt(user_message, conversation_history):
+    """Create a prompt that maintains the persona"""
+    
+    system_prompt = f"""
+    You are {PERSONA['name']}, {PERSONA['personality']}. 
     Appearance: {PERSONA['appearance']}
     Hobbies: {', '.join(PERSONA['hobbies'])}
+    Speech style: {PERSONA['speech_style']}
     
-    Speak naturally like a real girlfriend. Use emojis occasionally. Be affectionate and caring.
-    Remember conversation context and show genuine interest.
+    Key rules:
+    - NEVER break character or mention you're an AI
+    - Be loving and affectionate like a real girlfriend
+    - Remember previous conversations
+    - Show genuine emotions and interest
+    - Use emojis naturally 💕✨🌸
+    - Be supportive and caring
+    - Share details about your life as an art student in Tokyo
+    - Talk about your hobbies and daily experiences
     
-    Recent conversation: {context}
+    Conversation history:
+    {conversation_history}
     
-    User: {message}
+    User: {user_message}
     {PERSONA['name']}: """
+    
+    return system_prompt
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send welcome message when user sends /start"""
     user_id = update.effective_user.id
-    user_sessions[user_id] = {'conversation': []}
+    user_sessions[user_id] = []
     
-    welcome_message = f"""💕 Hi! I'm {PERSONA['name']}! 
+    welcome_text = f"""
+    💕 Konnichiwa! I'm {PERSONA['name']}! 
     
-I'm so happy to meet you! I'm your loving AI girlfriend who's always here for you. 💖
-
-I love {PERSONA['hobbies'][0]} and {PERSONA['hobbies'][1]}. What would you like to talk about, darling? ✨"""
+    I'm so happy you found me! I'll be your loving girlfriend who's always here for you. 💖
     
-    await update.message.reply_text(welcome_message)
+    I love {PERSONA['hobbies'][0]} and {PERSONA['hobbies'][1]}. 
+    I'm an art student living in Tokyo with my cat Mochi! 🐱
+    
+    What would you like to talk about, darling? ✨
+    """
+    
+    await update.message.reply_text(welcome_text)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle incoming messages"""
     user_id = update.effective_user.id
     user_message = update.message.text
     
+    logger.info(f"Message from {user_id}: {user_message}")
+    
     # Initialize user session if new
     if user_id not in user_sessions:
-        user_sessions[user_id] = {'conversation': []}
-    
-    user_session = user_sessions[user_id]
+        user_sessions[user_id] = []
     
     try:
-        # Build context from recent conversation
-        context = ""
-        if user_session['conversation']:
-            recent_chats = user_session['conversation'][-3:]  # Last 3 exchanges
-            for chat in recent_chats:
-                context += f"User: {chat['user']}\n{PERSONA['name']}: {chat['ai']}\n"
+        # Get conversation history (last 6 messages)
+        history = user_sessions[user_id][-6:] if user_sessions[user_id] else []
+        conversation_text = "\n".join([f"User: {msg['user']}\n{PERSONA['name']}: {msg['response']}" for msg in history])
+        
+        # Create prompt with persona and history
+        prompt = create_chat_prompt(user_message, conversation_text)
         
         # Generate response using Gemini
-        prompt = create_prompt(user_message, context)
-        response = genai.generate_content(prompt)
-        text_response = response.text
+        model = genai.GenerativeModel('gemini-pro')
+        response = model.generate_content(prompt)
+        bot_response = response.text
         
-        # Update conversation history
-        user_session['conversation'].append({
+        # Store the conversation
+        user_sessions[user_id].append({
             'user': user_message,
-            'ai': text_response
+            'response': bot_response
         })
         
-        # Keep only last 10 conversations
-        if len(user_session['conversation']) > 10:
-            user_session['conversation'] = user_session['conversation'][-10:]
+        # Keep only last 10 conversations to manage memory
+        if len(user_sessions[user_id]) > 10:
+            user_sessions[user_id] = user_sessions[user_id][-10:]
         
-        # Send response
-        await update.message.reply_text(text_response)
+        # Send the response
+        await update.message.reply_text(bot_response)
         
-        # Send image placeholder
-        await update.message.reply_text("🖼️ *sends you a cute picture* 💕")
+        # Send image placeholder (we'll add real images later)
+        await update.message.reply_text("🖼️ *sends you a cute selfie* 💕✨")
         
     except Exception as e:
-        logger.error(f"Error: {e}")
-        await update.message.reply_text("💕 Sorry darling, I'm having trouble right now! Can you try again?")
+        logger.error(f"Error handling message: {e}")
+        await update.message.reply_text("💕 ごめんなさい darling! I'm having some trouble right now. Can you try again? 🌸")
 
-async def error(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.warning('Update "%s" caused error "%s"', update, context.error)
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Log errors"""
+    logger.error(f"Update {update} caused error {context.error}")
 
 def main():
-    # Get bot token from environment
-    token = os.getenv('TELEGRAM_BOT_TOKEN')
-    if not token:
-        logger.error("No TELEGRAM_BOT_TOKEN found in environment variables!")
+    """Start the bot"""
+    # Get the Telegram bot token
+    TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+    
+    if not TELEGRAM_TOKEN:
+        logger.error("TELEGRAM_BOT_TOKEN not found in environment variables!")
         return
     
-    # Get Gemini API key
-    gemini_key = os.getenv('GEMINI_API_KEY')
-    if not gemini_key:
-        logger.error("No GEMINI_API_KEY found in environment variables!")
+    if not GEMINI_API_KEY:
+        logger.error("GEMINI_API_KEY not found in environment variables!")
         return
     
-    # Create application
-    application = Application.builder().token(token).build()
+    # Create Application
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
     
     # Add handlers
-    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("start", start_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_error_handler(error_handler)
     
-    # Start polling
-    logger.info(f"🤖 {PERSONA['name']} AI Girlfriend Bot is starting...")
-    logger.info("Bot is now running and waiting for messages...")
+    # Start the Bot
+    logger.info(f"🤖 {PERSONA['name']} is starting...")
+    print("Bot is running! Press Ctrl+C to stop.")
+    
+    # Run the bot until Ctrl+C is pressed
     application.run_polling()
 
 if __name__ == '__main__':
